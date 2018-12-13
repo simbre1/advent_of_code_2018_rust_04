@@ -4,6 +4,7 @@ extern crate chrono;
 use chrono::prelude::*;
 use std::collections::HashMap;
 use std::fs;
+use std::ops::Range;
 
 fn main() {
     let i = "01".parse::<u32>().unwrap();
@@ -17,7 +18,7 @@ fn main() {
                 .partial_cmp(&get_datetime_from_str(b))
                 .unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut guards: HashMap<u32, &mut Guard> = HashMap::new();
+    let mut guards_map: HashMap<u32, Guard> = HashMap::new();
 
     let mut current_id = 0;
     let mut current_start = None;
@@ -28,48 +29,133 @@ fn main() {
 
         if new_id.is_some() {
             current_id = new_id.unwrap();
-            current_start = Some(datetime);
+            if !guards_map.contains_key(&current_id) {
+                guards_map.insert(
+                    current_id,
+                    Guard { id: current_id, schedule: Vec::new() });
+            }
         } else if line.find("wakes up").is_some() {
-            current_start = Some(datetime);
-        } else {
             let timeslot = TimeSlot {
                 start: current_start.unwrap(),
                 stop: datetime
             };
 
-            let guard_opt = guards.get_mut(&current_id);
+            let guard_opt = guards_map.get_mut(&current_id);
             if guard_opt.is_some() {
-              guard_opt.unwrap().schedule.push(timeslot);
+                guard_opt.unwrap().schedule.push(timeslot);
             } else {
+                println!("noooooo");
                 current_start = None;
-            }
-        }
-
-    }
+            };
+        } else if line.find("falls").is_some() {
+            current_start = Some(datetime);
+        };
+    };
 
     let datetimes: Vec<DateTime<Utc>> = contents.lines()
         .map(|line| get_datetime_from_str(line))
         .collect();
 
-    datetimes.iter().for_each(|dt| println!("{}", dt));
+    let guards: Vec<&Guard> = guards_map.values().collect();
 
+    {
+        let sleepiest_guard = guards.iter()
+            .max_by(|a, b| a.sleepy_time().cmp(&b.sleepy_time()));
+        if sleepiest_guard.is_some() {
+            let sleepiest_guard = sleepiest_guard.unwrap();
+            show_guard(sleepiest_guard);
+        };
+    }
+
+    {
+        let part_two_guard = guards.iter()
+            .max_by(|a, b| a.deepest_sleep().1.cmp(&b.deepest_sleep().1));
+        if part_two_guard.is_some() {
+            let part_two_guard = part_two_guard.unwrap();
+            show_guard(part_two_guard);
+        };
+    }
 }
 
-/*
-012345678901234567
-[1518-11-01 00:00] Guard #10 begins shift
-[1518-11-01 00:05] falls asleep
-[1518-11-01 00:25] wakes up
-*/
+fn show_guard(guard: &Guard) {
+    println!(
+        "guard {}, sleepy {}, minute {} # {}, answer code: {}",
+        guard.id,
+        guard.sleepy_time(),
+        guard.deepest_sleep().0,
+        guard.deepest_sleep().1,
+        guard.id * guard.deepest_sleep().0);
+
+    for ts in &guard.schedule {
+        println!("{} -> {}", ts.start, ts.stop);
+    }
+}
 
 struct TimeSlot {
     start: DateTime<Utc>,
     stop: DateTime<Utc>
 }
 
+impl TimeSlot {
+    fn minutes_range(&self) -> Range<u32> {
+        Range{
+            start: self.start.minute(),
+            end: self.stop.minute()
+        }
+    }
+
+    fn minutes(&self) -> u32 {
+        ((self.stop.timestamp() - self.start.timestamp()) / 60) as u32
+    }
+
+    fn intersect(&self, other: &TimeSlot) -> Option<(u32, u32)> {
+        let a = self.minutes_range();
+        let b = self.minutes_range();
+
+        if a.start > b.end || b.start > a.end {
+            None
+        } else {
+            Some((
+                std::cmp::max(a.start, b.start),
+                std::cmp::min(a.end, b.end)
+            ))
+        }
+    }
+
+    fn check(&self, table: &mut [u32; 60]) {
+        for i in self.minutes_range() {
+            table[i as usize] += 1;
+        }
+    }
+}
+
+
 struct Guard {
     id: u32,
     schedule: Vec<TimeSlot>
+}
+
+impl Guard {
+    fn sleepy_time(&self) -> u32 {
+        self.schedule.iter()
+            .map(|ts| ts.minutes())
+            .sum()
+    }
+
+    fn deepest_sleep(&self) -> (u32, u32) {
+        let mut table: [u32; 60] = [0; 60];
+        self.schedule.iter().for_each(|ts| ts.check(&mut table));
+
+        let mut max = 0;
+        let mut max_i = 0;
+        for i in 0..60 {
+            if table[i] > max {
+                max = table[i];
+                max_i = i;
+            }
+        }
+        (max_i as u32, max)
+    }
 }
 
 fn get_datetime_from_str(str: &str) -> DateTime<Utc> {
